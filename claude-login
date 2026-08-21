@@ -1,0 +1,26 @@
+#!/bin/bash
+# claude-login
+# Run this in the GPU shell when `lab` reports NOT AUTHENTICATED.
+#
+# Interactive by necessity: the OAuth flow prints a URL and waits for you to
+# paste a code back, so it cannot run from a backgrounded job process.
+#
+# If CLAUDE_CONFIG_DIR is working, credentials land on /staging and this is a
+# once-ever step rather than a per-job one.
+
+. "${CHTC_LAB_ENV:?CHTC_LAB_ENV not set}"
+
+cd "$WORKDIR" || exit 1
+
+echo "Starting Claude."
+echo "  1. Type /login"
+echo "  2. Open the printed URL on your laptop"
+echo "  3. Authorize with your claude.ai account (NOT a Console API key)"
+echo "  4. Paste the code back here"
+echo "  5. Accept the workspace trust prompt, then exit"
+echo ""
+
+claude
+
+echo ""
+echo "Now run 'lab-stop' then 'lab' to pick up the credentials."

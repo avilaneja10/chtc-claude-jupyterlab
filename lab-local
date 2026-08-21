@@ -1,0 +1,24 @@
+#!/bin/bash
+# lab-local
+# Runs on YOUR LAPTOP. Cold laptop to a working GPU session in one command.
+#
+# Requires a Host block named 'chtc' in ~/.ssh/config:
+#
+#   Host chtc
+#       HostName ap2001.chtc.wisc.edu
+#       User YOUR_NETID
+#       ControlMaster auto
+#       ControlPath ~/.ssh/cm-%r@%h:%p
+#       ControlPersist 4h
+#       ServerAliveInterval 60
+#
+# ControlPersist matters: it reuses one authenticated connection, so this
+# stops triggering a DUO push every time you run it.
+
+PORT="${CHTC_LAB_PORT:-8747}"
+EXTRA="${CHTC_LAB_EXTRA_PORT:-8748}"
+
+exec ssh -t \
+    -L "${PORT}:localhost:${PORT}" \
+    -L "${EXTRA}:localhost:${EXTRA}" \
+    chtc "~/bin/lab"

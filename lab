@@ -1,0 +1,110 @@
+#!/bin/bash
+# lab
+# Run on the CHTC access point. Finds or submits the session, waits for it to
+# start, prints the JupyterLab and Claude URLs, then opens the tunnel.
+#
+# Idempotent: running it twice attaches to the existing job rather than
+# holding a second GPU.
+
+set -uo pipefail
+
+CONFIG="${CHTC_LAB_CONFIG:-$HOME/.chtc-jupyterlab/config.sh}"
+[ -f "$CONFIG" ] || { echo "No config at $CONFIG. See README." >&2; exit 1; }
+. "$CONFIG"
+
+BATCH_NAME="chtc-claude-jupyterlab"
+SUB_FILE="${PROJECT_DIR}/session.sub"
+SSH_WRAPPER="${PROJECT_DIR}/tunnel.sh"
+TOKEN_FILE="${WORKDIR}/.jupyter_token"
+RC_FILE="${WORKDIR}/rc_session.txt"
+
+# Exported for $ENV() in the submit file.
+export LAB_GPU_MACHINE="$GPU_MACHINE"
+export LAB_CONTAINER="$CONTAINER"
+export LAB_LAUNCH_SCRIPT="${PROJECT_DIR}/launch_session.sh"
+export LAB_ENV_FILE="${TOOLS}/env.sh"
+export LAB_CPUS="$REQUEST_CPUS"
+export LAB_MEMORY="$REQUEST_MEMORY"
+export LAB_DISK="$REQUEST_DISK"
+export LAB_GPU_MEMORY="$GPU_MIN_MEMORY"
+export LAB_GPU_CAPABILITY="$GPU_MIN_CAPABILITY"
+
+find_session() {
+    condor_q -constraint "JobBatchName == \"$BATCH_NAME\" && JobStatus <= 2" \
+             -af ClusterId JobStatus 2>/dev/null | head -n 1
+}
+
+cd "$PROJECT_DIR" || { echo "Cannot cd to $PROJECT_DIR" >&2; exit 1; }
+mkdir -p logs
+
+SESSION=$(find_session)
+if [ -z "$SESSION" ]; then
+    echo "No existing session. Submitting..."
+    condor_submit "$SUB_FILE" > /dev/null || { echo "submit failed" >&2; exit 1; }
+    sleep 3
+    SESSION=$(find_session)
+    [ -n "$SESSION" ] || { echo "Job never appeared in the queue." >&2; exit 1; }
+else
+    echo "Reusing existing session."
+fi
+
+CLUSTER=$(echo "$SESSION" | awk '{print $1}')
+STATUS=$(echo "$SESSION" | awk '{print $2}')
+echo "Job ${CLUSTER}.0"
+
+WAITED=0
+while [ "$STATUS" != "2" ]; do
+    if [ "$WAITED" -ge "$JOB_START_TIMEOUT" ]; then
+        echo ""
+        echo "Still idle after $((JOB_START_TIMEOUT / 60)) min. GPU is busy." >&2
+        echo "The job stays queued. Run 'lab' again later." >&2
+        exit 1
+    fi
+    printf "\r  waiting for the job to start... %ds " "$WAITED"
+    sleep 15
+    WAITED=$((WAITED + 15))
+    STATUS=$(condor_q "$CLUSTER" -af JobStatus 2>/dev/null | head -n 1)
+    [ -n "$STATUS" ] || {
+        echo ""; echo "Job left the queue. See logs/session_${CLUSTER}.log" >&2; exit 1; }
+done
+
+MACHINE=$(condor_q "$CLUSTER" -af RemoteHost 2>/dev/null | head -n 1)
+
+# Remote Control registers with the API after the job starts, so the URL
+# takes a few seconds to appear.
+RC_URL=""; RC_WAITED=0
+while [ "$RC_WAITED" -lt "$RC_TIMEOUT" ]; do
+    if [ -f "$RC_FILE" ]; then
+        RC_URL=$(grep -o 'https://claude\.ai[^ ]*' "$RC_FILE" 2>/dev/null | head -n 1)
+        [ -n "$RC_URL" ] && break
+    fi
+    printf "\r  waiting for the Claude session... %ds " "$RC_WAITED"
+    sleep 3
+    RC_WAITED=$((RC_WAITED + 3))
+done
+
+echo ""; echo ""
+echo "  running on : ${MACHINE:-unknown}"
+echo ""
+if [ -f "$TOKEN_FILE" ]; then
+    echo "  jupyter    : http://localhost:${JUPYTER_PORT}/lab?token=$(cat "$TOKEN_FILE")"
+else
+    echo "  jupyter    : token unreadable, see logs/session_${CLUSTER}.out"
+fi
+if [ -n "$RC_URL" ]; then
+    echo "  claude     : $RC_URL"
+elif grep -qi "logged in\|/login" "$RC_FILE" 2>/dev/null; then
+    echo "  claude     : NOT AUTHENTICATED"
+    echo ""
+    echo "               In the shell below, run:"
+    echo "               ${TOOLS}/bin/claude-login"
+else
+    echo "  claude     : not registered. Check ${RC_FILE},"
+    echo "               or find the session at https://claude.ai/code"
+fi
+echo ""
+echo "  Opening a shell on the GPU node. Exit detaches without killing it."
+echo "  Use 'lab-stop' when you are done for the day."
+echo ""
+
+exec condor_ssh_to_job -ssh "$SSH_WRAPPER" "${CLUSTER}.0"

@@ -1,0 +1,36 @@
+# session.sub
+# Values come from config.sh via $ENV(), exported by the `lab` launcher.
+
+JobBatchName = chtc-claude-jupyterlab
+
+log    = logs/session_$(Cluster).log
+output = logs/session_$(Cluster).out
+error  = logs/session_$(Cluster).err
+
+# Pinned to the group machine. condor_ssh_to_job only works on owned or
+# prioritised GPUs. Do NOT copy this requirement into real experiment jobs,
+# which should be free to spread across the GPU Lab.
+requirements = (Machine == "$ENV(LAB_GPU_MACHINE)") && (HasCHTCStaging == True)
+
+# Deliberately no +WantGPULab and no +GPUJobLength. Those are GPU Lab
+# attributes; "short" silently caps the job at 12 hours, which is the usual
+# cause of a session dying twice a day for no visible reason.
+
+container_image = $ENV(LAB_CONTAINER)
+
+executable          = $ENV(LAB_LAUNCH_SCRIPT)
+transfer_executable = true
+should_transfer_files   = YES
+when_to_transfer_output = ON_EXIT
+
+environment = "CHTC_LAB_ENV=$ENV(LAB_ENV_FILE)"
+
+request_gpus   = 1
+request_cpus   = $ENV(LAB_CPUS)
+request_memory = $ENV(LAB_MEMORY)
+request_disk   = $ENV(LAB_DISK)
+
+gpus_minimum_memory     = $ENV(LAB_GPU_MEMORY)
+gpus_minimum_capability = $ENV(LAB_GPU_CAPABILITY)
+
+queue

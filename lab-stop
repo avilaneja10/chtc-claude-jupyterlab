@@ -1,0 +1,19 @@
+#!/bin/bash
+# lab-stop
+# Release the GPU. Work on /staging is already durable, so nothing is lost.
+# Worth doing at the end of a working day: on group-owned hardware the GPU you
+# leave idle is your labmates'.
+
+set -uo pipefail
+
+SESSION=$(condor_q -constraint 'JobBatchName == "chtc-claude-jupyterlab" && JobStatus <= 2' \
+                   -af ClusterId 2>/dev/null | head -n 1)
+
+if [ -z "$SESSION" ]; then
+    echo "No session running."
+    exit 0
+fi
+
+echo "Removing job ${SESSION}.0"
+condor_rm "$SESSION"
+echo "GPU released."
