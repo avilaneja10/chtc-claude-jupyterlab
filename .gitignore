@@ -1,0 +1,6 @@
+logs/
+*.sif
+*.log
+*.out
+*.err
+config.local.sh
